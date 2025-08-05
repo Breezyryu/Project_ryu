@@ -8,6 +8,7 @@ for battery life prediction data preparation.
 import os
 import sys
 import logging
+import argparse
 from pathlib import Path
 
 # Add the project root to Python path
@@ -24,21 +25,34 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def example_basic_usage():
+def example_basic_usage(src_path=None, dst_path=None):
     """
     Example of basic pipeline usage with convenience function.
+    
+    Args:
+        src_path: Path to raw data directory (can be absolute or relative)
+        dst_path: Path to output directory (can be absolute or relative)
     """
     print("=== Basic Usage Example ===")
     
-    # Define paths (these would be your actual data paths)
-    src_path = "../../data/raw"  # Your raw Toyo data directory
-    dst_path = "../../data/processed"  # Output directory for processed data
+    # Use provided paths or defaults
+    if src_path is None:
+        src_path = "../../data/raw"  # Default relative path
+    if dst_path is None:
+        dst_path = "../../data/processed"  # Default output directory
+    
+    # Convert to Path objects to handle both absolute and relative paths
+    src_path = Path(src_path)
+    dst_path = Path(dst_path)
+    
+    print(f"📁 Source path: {src_path.absolute()}")
+    print(f"📁 Output path: {dst_path.absolute()}")
     
     try:
         # Run the complete preprocessing pipeline
         results = run_toyo_preprocessing(
-            src_path=src_path,
-            dst_path=dst_path,
+            src_path=str(src_path),
+            dst_path=str(dst_path),
             force_reprocess=False,  # Use existing results if available
             create_visualizations=True
         )
@@ -64,18 +78,32 @@ def example_basic_usage():
         logger.error(f"Processing failed: {e}")
 
 
-def example_advanced_usage():
+def example_advanced_usage(src_path=None, dst_path=None):
     """
     Example of advanced pipeline usage with custom configuration.
+    
+    Args:
+        src_path: Path to raw data directory (can be absolute or relative)
+        dst_path: Path to output directory (can be absolute or relative)
     """
     print("\n=== Advanced Usage Example ===")
     
-    src_path = "../../data/raw"
-    dst_path = "../../data/processed_advanced"
+    # Use provided paths or defaults
+    if src_path is None:
+        src_path = "../../data/raw"  # Default relative path
+    if dst_path is None:
+        dst_path = "../../data/processed_advanced"  # Default output directory
+    
+    # Convert to Path objects
+    src_path = Path(src_path)
+    dst_path = Path(dst_path)
+    
+    print(f"📁 Source path: {src_path.absolute()}")
+    print(f"📁 Output path: {dst_path.absolute()}")
     
     try:
         # Initialize pipeline with custom configuration
-        pipeline = ToyoPreprocessingPipeline(src_path, dst_path)
+        pipeline = ToyoPreprocessingPipeline(str(src_path), str(dst_path))
         
         # Check data summary before processing
         summary = pipeline.loader.get_data_summary()
@@ -133,20 +161,29 @@ def example_advanced_usage():
         logger.error(f"Advanced processing failed: {e}")
 
 
-def example_individual_components():
+def example_individual_components(src_path=None):
     """
     Example showing how to use individual components separately.
+    
+    Args:
+        src_path: Path to raw data directory (can be absolute or relative)
     """
     print("\n=== Individual Components Example ===")
     
-    src_path = "../../data/raw"
+    # Use provided path or default
+    if src_path is None:
+        src_path = "../../data/raw"  # Default relative path
+    
+    # Convert to Path object
+    src_path = Path(src_path)
+    print(f"📁 Source path: {src_path.absolute()}")
     
     try:
         # Step 1: Load data
         print("📥 Loading data...")
         from preprocess import ToyoDataLoader
         
-        loader = ToyoDataLoader(src_path)
+        loader = ToyoDataLoader(str(src_path))
         channels = loader.get_channel_folders()
         print(f"Found channels: {channels}")
         
@@ -211,18 +248,27 @@ def example_individual_components():
         logger.error(f"Individual components example failed: {e}")
 
 
-def example_data_exploration():
+def example_data_exploration(src_path=None):
     """
     Example showing data exploration capabilities.
+    
+    Args:
+        src_path: Path to raw data directory (can be absolute or relative)
     """
     print("\n=== Data Exploration Example ===")
     
-    src_path = "../../data/raw"
+    # Use provided path or default
+    if src_path is None:
+        src_path = "../../data/raw"  # Default relative path
+    
+    # Convert to Path object
+    src_path = Path(src_path)
+    print(f"📁 Source path: {src_path.absolute()}")
     
     try:
         from preprocess import ToyoDataLoader
         
-        loader = ToyoDataLoader(src_path)
+        loader = ToyoDataLoader(str(src_path))
         
         # Get comprehensive data summary
         summary = loader.get_data_summary()
@@ -267,38 +313,116 @@ def main():
     """
     Main function demonstrating all examples.
     """
+    # Create argument parser
+    parser = argparse.ArgumentParser(
+        description="Toyo Battery Data Preprocessing Examples",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+        Examples:
+          # Use absolute path for raw data:
+          python toyo_preprocessing_example.py --src C:/data/toyo/raw --dst C:/data/toyo/processed
+          
+          # Use only source path (output will be in default location):
+          python toyo_preprocessing_example.py --src /home/user/toyo_data
+          
+          # Run specific example:
+          python toyo_preprocessing_example.py --src C:/data/raw --example basic
+        """
+    )
+    
+    parser.add_argument(
+        '--src', '--source',
+        type=str,
+        help='Path to raw Toyo data directory (absolute or relative)',
+        default=None
+    )
+    
+    parser.add_argument(
+        '--dst', '--destination',
+        type=str,
+        help='Path to output directory for processed data (absolute or relative)',
+        default=None
+    )
+    
+    parser.add_argument(
+        '--example',
+        type=str,
+        choices=['basic', 'advanced', 'individual', 'exploration', 'all'],
+        default='all',
+        help='Which example to run (default: all)'
+    )
+    
+    parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Force reprocessing even if processed data exists'
+    )
+    
+    args = parser.parse_args()
+    
     print("🔋 Toyo Battery Data Preprocessing Examples")
     print("=" * 50)
     
-    # Note: These examples assume your data directory structure
-    # Modify the paths according to your actual data location
-    
-    print("ℹ️  Note: These examples use placeholder paths.")
-    print("   Please update the paths to point to your actual Toyo data directories.")
-    print("   Expected structure:")
-    print("   ../../data/raw/")
-    print("   ├── 93/")
-    print("   │   ├── 000001")
-    print("   │   ├── 000002")
-    print("   │   └── CAPACITY.LOG")
-    print("   ├── 86/")
-    print("   └── ...")
-    print()
-    
-    # Run examples (commented out to avoid errors when actual data isn't available)
-    
-    # Uncomment these lines when you have actual Toyo data:
-    # example_data_exploration()
-    # example_basic_usage() 
-    # example_advanced_usage()
-    # example_individual_components()
-    
-    print("💡 To run these examples with your data:")
-    print("   1. Update the src_path variables to point to your Toyo data directory")
-    print("   2. Uncomment the example function calls above")
-    print("   3. Run this script again")
-    
-    print("\n🚀 Example code is ready to use!")
+    # Check if source path is provided
+    if args.src:
+        src_path = Path(args.src)
+        if not src_path.exists():
+            print(f"❌ Error: Source path does not exist: {src_path}")
+            print("   Please provide a valid path to your Toyo data directory.")
+            return
+        
+        print(f"✅ Using source path: {src_path.absolute()}")
+        
+        # Set destination path
+        if args.dst:
+            dst_path = Path(args.dst)
+        else:
+            # Default: create processed folder in the same parent directory as source
+            dst_path = src_path.parent / "processed"
+        
+        print(f"✅ Using output path: {dst_path.absolute()}")
+        print()
+        
+        # Run selected examples
+        if args.example == 'basic' or args.example == 'all':
+            example_basic_usage(src_path, dst_path)
+        
+        if args.example == 'advanced' or args.example == 'all':
+            example_advanced_usage(src_path, dst_path)
+        
+        if args.example == 'individual' or args.example == 'all':
+            example_individual_components(src_path)
+        
+        if args.example == 'exploration' or args.example == 'all':
+            example_data_exploration(src_path)
+        
+    else:
+        # No source path provided, show help
+        print("ℹ️  No source path provided. Showing usage information:")
+        print()
+        print("To run examples with your data, provide the path to your raw data directory:")
+        print("  python toyo_preprocessing_example.py --src <path_to_raw_data>")
+        print()
+        print("Examples:")
+        print("  # Windows absolute path:")
+        print("  python toyo_preprocessing_example.py --src C:/Users/YourName/toyo_data/raw")
+        print()
+        print("  # Linux/Mac absolute path:")
+        print("  python toyo_preprocessing_example.py --src /home/username/toyo_data/raw")
+        print()
+        print("  # Relative path:")
+        print("  python toyo_preprocessing_example.py --src ../../data/raw")
+        print()
+        print("Expected Toyo data directory structure:")
+        print("  your_data_path/")
+        print("  ├── 93/")
+        print("  │   ├── 000001")
+        print("  │   ├── 000002")
+        print("  │   └── CAPACITY.LOG")
+        print("  ├── 86/")
+        print("  └── ...")
+        print()
+        print("For more options, run: python toyo_preprocessing_example.py --help")
 
 
 if __name__ == "__main__":
