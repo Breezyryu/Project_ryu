@@ -377,10 +377,16 @@ def main():
         if args.dst:
             dst_path = Path(args.dst)
         else:
-            # Default: create processed folder in the same parent directory as source
-            dst_path = src_path.parent / "processed"
+            # Default: create output folder based on input folder name
+            # ../../preprocess/입력폴더명
+            input_folder_name = src_path.name  # Get the last part of the path
+            dst_path = Path("../../preprocess") / input_folder_name
+            
+            # Create the directory if it doesn't exist
+            dst_path.mkdir(parents=True, exist_ok=True)
         
         print(f"✅ Using output path: {dst_path.absolute()}")
+        print(f"   (Created from input folder: {src_path.name})")
         print()
         
         # Run selected examples

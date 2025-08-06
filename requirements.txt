@@ -1,0 +1,39 @@
+# Core dependencies
+pandas>=1.5.0
+numpy>=1.20.0
+scipy>=1.7.0
+
+# Visualization
+plotly>=5.0.0
+matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# GUI Framework
+streamlit>=1.20.0
+
+# Browser Automation (optional)
+playwright>=1.30.0
+
+# Data formats
+pyarrow>=10.0.0  # For parquet support
+openpyxl>=3.0.9  # For Excel support
+h5py>=3.7.0      # For HDF5 support
+
+# Development and testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-asyncio>=0.20.0
+
+# Code quality
+black>=22.0.0
+flake8>=5.0.0
+mypy>=0.991
+
+# Documentation
+sphinx>=5.0.0
+sphinx-rtd-theme>=1.0.0
+
+# Utilities
+python-dateutil>=2.8.0
+tqdm>=4.64.0
+pathlib2>=2.3.7; python_version<"3.4"
