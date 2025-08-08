@@ -164,8 +164,8 @@ class BatteryDataPreprocessor:
             # 빈 행 제거
             df = df.dropna(how='all')
             
-            # 빈 열 제거 (모든 값이 NaN이거나 빈 문자열인 열)
-            df = self.remove_empty_columns(df)
+            # 의미있는 컬럼만 선택 (Col로 시작하는 컬럼과 빈 컬럼 제거)
+            df = self.filter_meaningful_columns(df)
             
             # 데이터 타입 변환
             numeric_columns = ['PassTime_Sec', 'Voltage_V', 'Current_mA', 
@@ -184,46 +184,38 @@ class BatteryDataPreprocessor:
             print(f"파일 파싱 실패 {file_path}: {e}")
             return pd.DataFrame()
     
-    def clean_column_name(self, col_name: str) -> str:
+    def filter_meaningful_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        컬럼명을 정리 (특수문자 제거, 공백 제거)
-        
-        Args:
-            col_name (str): 원본 컬럼명
-            
-        Returns:
-            str: 정리된 컬럼명
-        """
-        # 공백 제거
-        clean_name = col_name.strip()
-        
-        # 특수문자를 언더스코어로 변경
-        clean_name = re.sub(r'[\[\]\(\)]', '', clean_name)  # 대괄호, 소괄호 제거
-        clean_name = re.sub(r'[^\w]', '_', clean_name)  # 특수문자를 언더스코어로
-        clean_name = re.sub(r'_+', '_', clean_name)  # 연속된 언더스코어를 하나로
-        clean_name = clean_name.strip('_')  # 시작/끝 언더스코어 제거
-        
-        return clean_name
-    
-    def remove_empty_columns(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        빈 열 제거
+        의미있는 컬럼만 선택 (Col로 시작하는 컬럼과 빈 컬럼 제거)
         
         Args:
             df (pd.DataFrame): 입력 데이터프레임
             
         Returns:
-            pd.DataFrame: 빈 열이 제거된 데이터프레임
+            pd.DataFrame: 필터링된 데이터프레임
         """
-        # 모든 값이 NaN이거나 빈 문자열인 열 찾기
-        empty_cols = []
-        for col in df.columns:
-            if df[col].isna().all() or (df[col].astype(str).str.strip() == '').all():
-                empty_cols.append(col)
+        # 제거할 컬럼 찾기
+        columns_to_remove = []
         
-        if empty_cols:
-            print(f"빈 열 제거: {empty_cols}")
-            df = df.drop(columns=empty_cols)
+        for col in df.columns:
+            # Col로 시작하는 컬럼 제거 (Col5, Col6, Col8 등)
+            if col.startswith('Col') and col[3:].isdigit():
+                columns_to_remove.append(col)
+                continue
+            
+            # 빈 컬럼 제거 (모든 값이 NaN이거나 빈 문자열)
+            if df[col].isna().all() or (df[col].astype(str).str.strip() == '').all():
+                columns_to_remove.append(col)
+                continue
+            
+            # 숫자로만 된 컬럼명 제거 (예: '0', '1' 등)
+            if col.isdigit():
+                columns_to_remove.append(col)
+                continue
+        
+        if columns_to_remove:
+            print(f"제거되는 컬럼: {columns_to_remove}")
+            df = df.drop(columns=columns_to_remove)
         
         return df
     
@@ -264,8 +256,8 @@ class BatteryDataPreprocessor:
             # 빈 행 제거
             df = df.dropna(how='all')
             
-            # 빈 열 제거
-            df = self.remove_empty_columns(df)
+            # 의미있는 컬럼만 선택
+            df = self.filter_meaningful_columns(df)
             
             # 특정 컬럼명 매핑 (사용자 요구사항에 맞게)
             column_mapping = {
