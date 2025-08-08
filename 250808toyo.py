@@ -12,7 +12,7 @@ class BatteryDataPreprocessor:
     리튬이온배터리 성능/수명 측정 데이터 전처리 클래스
     """
     
-    def __init__(self, data_path: str):
+    def __init__(self, data_path: str) -> None:
         """
         초기화
         
@@ -169,107 +169,7 @@ class BatteryDataPreprocessor:
         if current == total:
             print()
     
-    def parse_data_file(self, file_path: Path, columns: List[str]) -> pd.DataFrame:
-        """
-        개별 데이터 파일을 파싱
-        
-        Args:
-            file_path (Path): 데이터 파일 경로
-            columns (List[str]): 컬럼명 리스트
-            
-        Returns:
-            pd.DataFrame: 파싱된 데이터프레임
-        """
-        try:
-            # 여러 인코딩 시도하여 데이터 읽기
-            encodings = ['utf-8', 'cp949', 'euc-kr', 'latin1']
-            df = pd.DataFrame()
-            
-            for encoding in encodings:
-                try:
-                    # 헤더가 있는 파일이므로 첫 번째 줄은 건너뛰고 읽기
-                    df = pd.read_csv(
-                        str(file_path),
-                        header=0,  # 첫 번째 줄을 헤더로 사용
-                        encoding=encoding,
-                        on_bad_lines='skip'
-                    )
-                    break
-                except (UnicodeDecodeError, pd.errors.ParserError):
-                    continue
-            
-            if df.empty:
-                return pd.DataFrame()
-            
-            # 컬럼명 정리 (특수문자 제거, 공백 제거)
-            df.columns = [self.clean_column_name(col) for col in df.columns]
-            
-            # 빈 행 제거
-            df = df.dropna(how='all')
-            
-            # 의미있는 컬럼만 선택 (Col로 시작하는 컬럼과 빈 컬럼 제거)
-            df, _, _ = self.filter_meaningful_columns(df, verbose=False)
-            
-            # 데이터 타입 변환
-            numeric_columns = ['PassTime_Sec', 'Voltage_V', 'Current_mA', 
-                             'Temp1_Deg', 'Condition', 'Mode', 'Cycle', 'TotlCycle', 'PassedDate']
-            
-            for col in numeric_columns:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-            
-            # 파일명 추가
-            df['FileName'] = file_path.name
-            
-            return df
-            
-        except Exception as e:
-            print(f"파일 파싱 실패 {file_path}: {e}")
-            return pd.DataFrame()
-    
-    def clean_column_name(self, col_name: str) -> str:
-        """
-        컬럼명을 정리 (특수문자 제거, 공백 제거)
-        
-        Args:
-            col_name (str): 원본 컬럼명
-            
-        Returns:
-            str: 정리된 컬럼명
-        """
-        # 공백 제거
-        clean_name = col_name.strip()
-        
-        # 특수문자를 언더스코어로 변경
-        clean_name = re.sub(r'[\[\]\(\)]', '', clean_name)  # 대괄호, 소괄호 제거
-        clean_name = re.sub(r'[^\w]', '_', clean_name)  # 특수문자를 언더스코어로
-        clean_name = re.sub(r'_+', '_', clean_name)  # 연속된 언더스코어를 하나로
-        clean_name = clean_name.strip('_')  # 시작/끝 언더스코어 제거
-        
-        return clean_name
-    
-    def print_progress_bar(self, current: int, total: int, bar_length: int = 40) -> None:
-        """
-        진행률을 바 형태로 출력
-        
-        Args:
-            current (int): 현재 진행량
-            total (int): 전체량
-            bar_length (int): 바의 길이
-        """
-        if total == 0:
-            return
-            
-        percent = float(current) / total
-        filled_length = int(bar_length * percent)
-        
-        bar = '█' * filled_length + '░' * (bar_length - filled_length)
-        
-        print(f'\r  진행률: |{bar}| {current}/{total} ({percent:.1%})', end='', flush=True)
-        
-        # 완료 시 줄바꿈
-        if current == total:
-            print()
+    def filter_meaningful_columns(self, df: pd.DataFrame, verbose: bool = False) -> Tuple[pd.DataFrame, List[str], List[str]]:
         """
         의미있는 컬럼만 선택 (Col로 시작하는 컬럼과 빈 컬럼 제거)
         
@@ -278,14 +178,14 @@ class BatteryDataPreprocessor:
             verbose (bool): 상세 로그 출력 여부
             
         Returns:
-            pd.DataFrame: 필터링된 데이터프레임
+            Tuple[pd.DataFrame, List[str], List[str]]: (필터링된 데이터프레임, 원본 컬럼 리스트, 제거된 컬럼 리스트)
         """
         original_columns = list(df.columns)
         columns_to_remove = []
         
         for col in df.columns:
             # Col로 시작하는 컬럼 제거 (Col5, Col6, Col8 등)
-            if col.startswith('Col') and col[3:].isdigit():
+            if col.startswith('Col') and len(col) > 3 and col[3:].isdigit():
                 columns_to_remove.append(col)
                 continue
             
@@ -300,11 +200,71 @@ class BatteryDataPreprocessor:
                 continue
         
         if columns_to_remove:
-            df = df.drop(columns=columns_to_remove)
+            df_filtered = df.drop(columns=columns_to_remove)
             if verbose:
                 print(f"제거되는 컬럼: {columns_to_remove}")
+        else:
+            df_filtered = df.copy()
         
-        return df, original_columns, columns_to_remove
+        return df_filtered, original_columns, columns_to_remove
+    
+    def parse_data_file(self, file_path: Path, original_columns: List[str]) -> pd.DataFrame:
+        """
+        개별 데이터 파일을 파싱
+        
+        Args:
+            file_path (Path): 데이터 파일 경로
+            original_columns (List[str]): 원본 컬럼명 리스트
+            
+        Returns:
+            pd.DataFrame: 파싱된 데이터프레임
+        """
+        try:
+            # 여러 인코딩 시도하여 데이터 읽기
+            encodings = ['utf-8', 'cp949', 'euc-kr', 'latin1']
+            df: Optional[pd.DataFrame] = None
+            
+            for encoding in encodings:
+                try:
+                    # 헤더가 있는 파일이므로 첫 번째 줄은 건너뛰고 읽기
+                    df = pd.read_csv(
+                        str(file_path),
+                        header=0,  # 첫 번째 줄을 헤더로 사용
+                        encoding=encoding,
+                        on_bad_lines='skip'
+                    )
+                    break
+                except (UnicodeDecodeError, pd.errors.ParserError):
+                    continue
+            
+            if df is None or df.empty:
+                return pd.DataFrame()
+            
+            # 컬럼명 정리 (특수문자 제거, 공백 제거)
+            df.columns = [self.clean_column_name(str(col)) for col in df.columns]
+            
+            # 빈 행 제거
+            df = df.dropna(how='all')
+            
+            # 의미있는 컬럼만 선택 (Col로 시작하는 컬럼과 빈 컬럼 제거)
+            df_filtered, _, _ = self.filter_meaningful_columns(df, verbose=False)
+            
+            # 데이터 타입 변환
+            numeric_columns = ['PassTime_Sec', 'Voltage_V', 'Current_mA', 
+                             'Temp1_Deg', 'Condition', 'Mode', 'Cycle', 'TotlCycle', 'PassedDate']
+            
+            for col in numeric_columns:
+                if col in df_filtered.columns:
+                    df_filtered[col] = pd.to_numeric(df_filtered[col], errors='coerce')
+            
+            # 파일명 추가
+            df_filtered['FileName'] = file_path.name
+            
+            return df_filtered
+            
+        except Exception as e:
+            print(f"파일 파싱 실패 {file_path}: {e}")
+            return pd.DataFrame()
     
     def parse_capacity_log(self, file_path: Path) -> pd.DataFrame:
         """
@@ -319,7 +279,7 @@ class BatteryDataPreprocessor:
         try:
             # 여러 인코딩 시도
             encodings = ['utf-8', 'cp949', 'euc-kr', 'latin1']
-            df = pd.DataFrame()
+            df: Optional[pd.DataFrame] = None
             
             for encoding in encodings:
                 try:
@@ -333,17 +293,17 @@ class BatteryDataPreprocessor:
                 except (UnicodeDecodeError, pd.errors.ParserError):
                     continue
             
-            if df.empty:
+            if df is None or df.empty:
                 return pd.DataFrame()
             
             # 컬럼명 정리
-            df.columns = [self.clean_column_name(col) for col in df.columns]
+            df.columns = [self.clean_column_name(str(col)) for col in df.columns]
             
             # 빈 행 제거
             df = df.dropna(how='all')
             
             # 의미있는 컬럼만 선택
-            df, _, _ = self.filter_meaningful_columns(df, verbose=False)
+            df_filtered, _, _ = self.filter_meaningful_columns(df, verbose=False)
             
             # 특정 컬럼명 매핑 (사용자 요구사항에 맞게)
             column_mapping = {
@@ -357,8 +317,8 @@ class BatteryDataPreprocessor:
             
             # 컬럼명 변경
             for old_name, new_name in column_mapping.items():
-                if old_name in df.columns:
-                    df = df.rename(columns={old_name: new_name})
+                if old_name in df_filtered.columns:
+                    df_filtered = df_filtered.rename(columns={old_name: new_name})
             
             # 데이터 타입 변환
             numeric_columns = ['Condition', 'Mode', 'Cycle', 'TotlCycle',
@@ -366,10 +326,10 @@ class BatteryDataPreprocessor:
                              'PeakTemp_Deg', 'Ocv_V', 'DchCycle', 'PassedDate']
             
             for col in numeric_columns:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                if col in df_filtered.columns:
+                    df_filtered[col] = pd.to_numeric(df_filtered[col], errors='coerce')
             
-            return df
+            return df_filtered
             
         except Exception as e:
             print(f"CAPACITY.LOG 파싱 실패 {file_path}: {e}")
@@ -407,15 +367,19 @@ class BatteryDataPreprocessor:
         print(f"감지된 데이터 형식: {data_format}")
         
         # 첫 번째 파일에서 컬럼 필터링 정보 수집
-        temp_df = pd.read_csv(str(first_file_path), header=0, nrows=1, on_bad_lines='skip')
-        temp_df.columns = [self.clean_column_name(col) for col in temp_df.columns]
-        _, _, removed_columns = self.filter_meaningful_columns(temp_df, verbose=False)
-        
-        if removed_columns:
-            print(f"제거될 컬럼: {removed_columns}")
+        try:
+            temp_df = pd.read_csv(str(first_file_path), header=0, nrows=1, on_bad_lines='skip')
+            temp_df.columns = [self.clean_column_name(str(col)) for col in temp_df.columns]
+            _, _, removed_columns = self.filter_meaningful_columns(temp_df, verbose=False)
+            
+            if removed_columns:
+                print(f"제거될 컬럼: {removed_columns}")
+        except Exception as e:
+            print(f"컬럼 분석 실패: {e}")
+            removed_columns = []
         
         # 모든 데이터 파일 처리
-        all_data = []
+        all_data: List[pd.DataFrame] = []
         for i, file_name in enumerate(data_files):
             file_path = channel_path / file_name
             df = self.parse_data_file(file_path, original_columns)
@@ -457,7 +421,7 @@ class BatteryDataPreprocessor:
             Dict[str, Tuple[pd.DataFrame, pd.DataFrame]]: 채널별 (데이터, 용량로그) 딕셔너리
         """
         channels = self.detect_channels()
-        results = {}
+        results: Dict[str, Tuple[pd.DataFrame, pd.DataFrame]] = {}
         
         if not channels:
             print("처리할 채널이 없습니다.")
@@ -525,20 +489,22 @@ class BatteryDataPreprocessor:
         
         print("저장 완료!")
     
-    def get_summary(self) -> Dict:
+    def get_summary(self) -> Dict[str, Union[int, Dict[str, Dict[str, Union[int, str, Dict[str, str]]]]]]:
         """
         처리된 데이터의 요약 정보 반환
         
         Returns:
             Dict: 요약 정보
         """
-        summary = {
+        summary: Dict[str, Union[int, Dict[str, Dict[str, Union[int, str, Dict[str, str]]]]]] = {
             'total_channels': len(self.channels),
             'channels': {}
         }
         
+        channels_info: Dict[str, Dict[str, Union[int, str, Dict[str, str]]]] = {}
+        
         for channel in self.channels:
-            channel_summary = {
+            channel_summary: Dict[str, Union[int, str, Dict[str, str]]] = {
                 'data_rows': len(self.channels[channel]),
                 'capacity_log_rows': len(self.capacity_logs[channel]),
                 'date_range': None,
@@ -565,12 +531,13 @@ class BatteryDataPreprocessor:
                         'unique_count': cycles.nunique()
                     }
             
-            summary['channels'][channel] = channel_summary
+            channels_info[channel] = channel_summary
         
+        summary['channels'] = channels_info
         return summary
 
 # 사용 예시 함수
-def main(data_path: str, output_path: Optional[str] = None) -> Optional['BatteryDataPreprocessor']:
+def main(data_path: str, output_path: Optional[str] = None) -> Optional[BatteryDataPreprocessor]:
     """
     메인 실행 함수
     
@@ -593,14 +560,21 @@ def main(data_path: str, output_path: Optional[str] = None) -> Optional['Battery
         print("\n=== 처리 결과 요약 ===")
         print(f"총 채널 수: {summary['total_channels']}")
         
-        for channel, info in summary['channels'].items():
-            print(f"\n채널 {channel}:")
-            print(f"  - 데이터 행 수: {info['data_rows']:,}")
-            print(f"  - 용량로그 행 수: {info['capacity_log_rows']:,}")
-            if info['date_range']:
-                print(f"  - 날짜 범위: {info['date_range']['start']} ~ {info['date_range']['end']}")
-            if info['cycles']:
-                print(f"  - 사이클 범위: {info['cycles']['min']} ~ {info['cycles']['max']} ({info['cycles']['unique_count']} 개)")
+        channels = summary.get('channels', {})
+        if isinstance(channels, dict):
+            for channel, info in channels.items():
+                if isinstance(info, dict):
+                    print(f"\n채널 {channel}:")
+                    print(f"  - 데이터 행 수: {info.get('data_rows', 0):,}")
+                    print(f"  - 용량로그 행 수: {info.get('capacity_log_rows', 0):,}")
+                    
+                    date_range = info.get('date_range')
+                    if date_range and isinstance(date_range, dict):
+                        print(f"  - 날짜 범위: {date_range.get('start')} ~ {date_range.get('end')}")
+                    
+                    cycles = info.get('cycles')
+                    if cycles and isinstance(cycles, dict):
+                        print(f"  - 사이클 범위: {cycles.get('min')} ~ {cycles.get('max')} ({cycles.get('unique_count')} 개)")
         
         # 데이터 저장
         if output_path:
