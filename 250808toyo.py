@@ -125,6 +125,50 @@ class BatteryDataPreprocessor:
             ]
             return 'toyo2', default_columns
     
+    def clean_column_name(self, col_name: str) -> str:
+        """
+        컬럼명을 정리 (특수문자 제거, 공백 제거)
+        
+        Args:
+            col_name (str): 원본 컬럼명
+            
+        Returns:
+            str: 정리된 컬럼명
+        """
+        # 공백 제거
+        clean_name = col_name.strip()
+        
+        # 특수문자를 언더스코어로 변경
+        clean_name = re.sub(r'[\[\]\(\)]', '', clean_name)  # 대괄호, 소괄호 제거
+        clean_name = re.sub(r'[^\w]', '_', clean_name)  # 특수문자를 언더스코어로
+        clean_name = re.sub(r'_+', '_', clean_name)  # 연속된 언더스코어를 하나로
+        clean_name = clean_name.strip('_')  # 시작/끝 언더스코어 제거
+        
+        return clean_name
+    
+    def print_progress_bar(self, current: int, total: int, bar_length: int = 40) -> None:
+        """
+        진행률을 바 형태로 출력
+        
+        Args:
+            current (int): 현재 진행량
+            total (int): 전체량
+            bar_length (int): 바의 길이
+        """
+        if total == 0:
+            return
+            
+        percent = float(current) / total
+        filled_length = int(bar_length * percent)
+        
+        bar = '█' * filled_length + '░' * (bar_length - filled_length)
+        
+        print(f'\r  진행률: |{bar}| {current}/{total} ({percent:.1%})', end='', flush=True)
+        
+        # 완료 시 줄바꿈
+        if current == total:
+            print()
+    
     def parse_data_file(self, file_path: Path, columns: List[str]) -> pd.DataFrame:
         """
         개별 데이터 파일을 파싱
