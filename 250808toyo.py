@@ -719,12 +719,10 @@ class BatteryDataPreprocessor:
             print(f"채널 {channel}에서 데이터 파일을 찾을 수 없습니다.")
             return pd.DataFrame(), pd.DataFrame()
         
-        # 첫 번째 파일에서 헤더 위치 확인 (Toyo만, 한 번만 출력)
-        header_line = 2  # 기본값
-        if self.data_type in ['toyo1', 'toyo2'] and data_files:
-            first_file_path = channel_path / data_files[0]
-            header_line = self.find_toyo_header_line(first_file_path, verbose=True)
-            print(f"Toyo 헤더 위치: 줄 {header_line + 1}")
+        # Toyo의 경우 헤더는 항상 4번째 줄 (인덱스 3)
+        header_line = 3 if self.data_type in ['toyo1', 'toyo2'] else 0
+        if self.data_type in ['toyo1', 'toyo2']:
+            print(f"Toyo 헤더 위치: 줄 {header_line + 1} (고정)")
         
         # 모든 데이터 파일 처리 (tqdm으로 진행률 표시)
         all_data: List[pd.DataFrame] = []
@@ -763,20 +761,28 @@ class BatteryDataPreprocessor:
                 
                 pbar.update(1)
         
-        # 데이터 통합
+        # 데이터 통합 (인덱스 재설정으로 중복 인덱스 문제 해결)
         if all_data:
             print("데이터 통합 중...")
-            combined_data = pd.concat(all_data, ignore_index=True)
-            print(f"통합된 데이터 행 수: {len(combined_data):,}")
-            print(f"최종 컬럼 수: {len(combined_data.columns)}")
-            
-            # PNE의 경우 파일 타입별 통계 출력
-            if self.data_type == 'pne':
-                print("PNE 파일별 통계:")
-                for file_type, dfs in pne_file_groups.items():
-                    if dfs:
-                        total_rows = sum(len(df) for df in dfs)
-                        print(f"  - {file_type}: {len(dfs)}개 파일, {total_rows:,}행")
+            try:
+                # 각 DataFrame의 인덱스를 리셋하여 중복 방지
+                for i, df in enumerate(all_data):
+                    all_data[i] = df.reset_index(drop=True)
+                
+                combined_data = pd.concat(all_data, ignore_index=True)
+                print(f"통합된 데이터 행 수: {len(combined_data):,}")
+                print(f"최종 컬럼 수: {len(combined_data.columns)}")
+                
+                # PNE의 경우 파일 타입별 통계 출력
+                if self.data_type == 'pne':
+                    print("PNE 파일별 통계:")
+                    for file_type, dfs in pne_file_groups.items():
+                        if dfs:
+                            total_rows = sum(len(df) for df in dfs)
+                            print(f"  - {file_type}: {len(dfs)}개 파일, {total_rows:,}행")
+            except Exception as e:
+                print(f"데이터 통합 중 오류 발생: {e}")
+                combined_data = pd.DataFrame()
         else:
             combined_data = pd.DataFrame()
             print("처리된 데이터가 없습니다.")
@@ -812,7 +818,7 @@ class BatteryDataPreprocessor:
             
             for encoding in encodings:
                 try:
-                    # 미리 찾은 헤더 줄부터 읽기
+                    # 고정된 헤더 줄부터 읽기
                     df = pd.read_csv(
                         str(file_path),
                         header=header_line,
@@ -832,6 +838,9 @@ class BatteryDataPreprocessor:
             # 빈 행 제거
             df = df.dropna(how='all')
             
+            # 인덱스가 중복되지 않도록 리셋
+            df = df.reset_index(drop=True)
+            
             # 의미있는 컬럼만 선택
             df_filtered, _, _ = self.filter_meaningful_columns(df, verbose=False)
             
@@ -848,6 +857,9 @@ class BatteryDataPreprocessor:
             
             # 파일명 추가
             df_filtered['FileName'] = file_path.name
+            
+            # 최종 인덱스 리셋으로 중복 방지
+            df_filtered = df_filtered.reset_index(drop=True)
             
             return df_filtered
             
@@ -890,7 +902,9 @@ class BatteryDataPreprocessor:
                     })
                     
                 except Exception as e:
-                    print(f"채널 {channel} 처리 중 오류 발생: {e}")
+                    print(f"\n채널 {channel} 처리 중 상세 오류:")
+                    print(f"  오류 타입: {type(e).__name__}")
+                    print(f"  오류 메시지: {str(e)}")
                     results[channel] = (pd.DataFrame(), pd.DataFrame())
                     pbar.set_postfix({"상태": "오류 발생"})
                 
@@ -965,24 +979,24 @@ class BatteryDataPreprocessor:
             file_size = file.stat().st_size / (1024 * 1024)  # MB 단위
             print(f"  - {file.name} ({file_size:.1f}MB)")
     
-    def get_summary(self) -> Dict[str, Union[int, str, Dict[str, Dict[str, Union[int, str, Dict[str, str]]]]]]:
+    def get_summary(self) -> Dict[str, Union[int, str, Dict[str, Dict[str, Union[int, str, Optional[Dict[str, str]]]]]]]:
         """
         처리된 데이터의 요약 정보 반환
         
         Returns:
             Dict: 요약 정보
         """
-        summary: Dict[str, Union[int, str, Dict[str, Dict[str, Union[int, str, Dict[str, str]]]]]] = {
+        summary: Dict[str, Union[int, str, Dict[str, Dict[str, Union[int, str, Optional[Dict[str, str]]]]]]] = {
             'equipment_type': self.data_type or 'unknown',
             'capacity_info': self.capacity_info,
             'total_channels': len(self.channels),
             'channels': {}
         }
         
-        channels_info: Dict[str, Dict[str, Union[int, str, Dict[str, str]]]] = {}
+        channels_info: Dict[str, Dict[str, Union[int, str, Optional[Dict[str, str]]]]] = {}
         
         for channel in self.channels:
-            channel_summary: Dict[str, Union[int, str, Dict[str, str]]] = {
+            channel_summary: Dict[str, Union[int, str, Optional[Dict[str, str]]]] = {
                 'data_rows': len(self.channels[channel]),
                 'capacity_log_rows': len(self.capacity_logs[channel]),
                 'date_range': None,
@@ -1001,10 +1015,11 @@ class BatteryDataPreprocessor:
                     
                     valid_dates = dates.dropna()
                     if not valid_dates.empty:
-                        channel_summary['date_range'] = {
+                        date_range_dict: Dict[str, str] = {
                             'start': valid_dates.min().strftime('%Y-%m-%d'),
                             'end': valid_dates.max().strftime('%Y-%m-%d')
                         }
+                        channel_summary['date_range'] = date_range_dict
                         break
             
             # 사이클 정보
@@ -1013,11 +1028,12 @@ class BatteryDataPreprocessor:
                 if not self.channels[channel].empty and cycle_col in self.channels[channel].columns:
                     cycles = self.channels[channel][cycle_col].dropna()
                     if not cycles.empty:
-                        channel_summary['cycles'] = {
-                            'min': int(cycles.min()),
-                            'max': int(cycles.max()),
-                            'unique_count': cycles.nunique()
+                        cycles_dict: Dict[str, str] = {
+                            'min': str(int(cycles.min())),
+                            'max': str(int(cycles.max())),
+                            'unique_count': str(cycles.nunique())
                         }
+                        channel_summary['cycles'] = cycles_dict
                         break
             
             channels_info[channel] = channel_summary
@@ -1065,7 +1081,10 @@ def main(data_path: str, output_path: Optional[str] = None) -> Optional[BatteryD
                     
                     cycles = info.get('cycles')
                     if cycles and isinstance(cycles, dict):
-                        print(f"  - 사이클 범위: {cycles.get('min')} ~ {cycles.get('max')} ({cycles.get('unique_count')} 개)")
+                        min_val = cycles.get('min', '0')
+                        max_val = cycles.get('max', '0')
+                        count_val = cycles.get('unique_count', '0')
+                        print(f"  - 사이클 범위: {min_val} ~ {max_val} ({count_val} 개)")
         
         # 데이터 저장
         if output_path:
