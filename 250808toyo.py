@@ -155,7 +155,6 @@ class BatteryDataPreprocessor:
                     continue
             
             if df.empty:
-                print(f"파일 읽기 실패: {file_path}")
                 return pd.DataFrame()
             
             # 컬럼명 정리 (특수문자 제거, 공백 제거)
@@ -165,7 +164,7 @@ class BatteryDataPreprocessor:
             df = df.dropna(how='all')
             
             # 의미있는 컬럼만 선택 (Col로 시작하는 컬럼과 빈 컬럼 제거)
-            df = self.filter_meaningful_columns(df)
+            df, _, _ = self.filter_meaningful_columns(df, verbose=False)
             
             # 데이터 타입 변환
             numeric_columns = ['PassTime_Sec', 'Voltage_V', 'Current_mA', 
@@ -184,17 +183,18 @@ class BatteryDataPreprocessor:
             print(f"파일 파싱 실패 {file_path}: {e}")
             return pd.DataFrame()
     
-    def filter_meaningful_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+    def filter_meaningful_columns(self, df: pd.DataFrame, verbose: bool = False) -> pd.DataFrame:
         """
         의미있는 컬럼만 선택 (Col로 시작하는 컬럼과 빈 컬럼 제거)
         
         Args:
             df (pd.DataFrame): 입력 데이터프레임
+            verbose (bool): 상세 로그 출력 여부
             
         Returns:
             pd.DataFrame: 필터링된 데이터프레임
         """
-        # 제거할 컬럼 찾기
+        original_columns = list(df.columns)
         columns_to_remove = []
         
         for col in df.columns:
@@ -214,10 +214,11 @@ class BatteryDataPreprocessor:
                 continue
         
         if columns_to_remove:
-            print(f"제거되는 컬럼: {columns_to_remove}")
             df = df.drop(columns=columns_to_remove)
+            if verbose:
+                print(f"제거되는 컬럼: {columns_to_remove}")
         
-        return df
+        return df, original_columns, columns_to_remove
     
     def parse_capacity_log(self, file_path: Path) -> pd.DataFrame:
         """
@@ -315,17 +316,24 @@ class BatteryDataPreprocessor:
             print(f"채널 {channel}에서 데이터 파일을 찾을 수 없습니다.")
             return pd.DataFrame(), pd.DataFrame()
         
-        # 첫 번째 파일로 데이터 형식 감지
+        # 첫 번째 파일로 데이터 형식 감지 및 컬럼 분석
         first_file_path = channel_path / data_files[0]
-        data_format, columns = self.detect_data_format(first_file_path)
+        data_format, original_columns = self.detect_data_format(first_file_path)
         print(f"감지된 데이터 형식: {data_format}")
-        print(f"감지된 컬럼: {columns[:5]}...")  # 처음 5개만 표시
+        
+        # 첫 번째 파일에서 컬럼 필터링 정보 수집
+        temp_df = pd.read_csv(str(first_file_path), header=0, nrows=1, on_bad_lines='skip')
+        temp_df.columns = [self.clean_column_name(col) for col in temp_df.columns]
+        _, _, removed_columns = self.filter_meaningful_columns(temp_df, verbose=False)
+        
+        if removed_columns:
+            print(f"제거될 컬럼: {removed_columns}")
         
         # 모든 데이터 파일 처리
         all_data = []
         for i, file_name in enumerate(data_files):
             file_path = channel_path / file_name
-            df = self.parse_data_file(file_path, columns)
+            df = self.parse_data_file(file_path, original_columns)
             
             if not df.empty:
                 all_data.append(df)
@@ -337,8 +345,8 @@ class BatteryDataPreprocessor:
         # 데이터 통합
         if all_data:
             combined_data = pd.concat(all_data, ignore_index=True)
-            print(f"통합된 데이터 행 수: {len(combined_data)}")
-            print(f"최종 컬럼: {list(combined_data.columns)}")
+            print(f"통합된 데이터 행 수: {len(combined_data):,}")
+            print(f"최종 컬럼 수: {len(combined_data.columns)} ({list(combined_data.columns)})")
         else:
             combined_data = pd.DataFrame()
             print("처리된 데이터가 없습니다.")
@@ -347,9 +355,9 @@ class BatteryDataPreprocessor:
         capacity_log_path = channel_path / "CAPACITY.LOG"
         if capacity_log_path.exists():
             capacity_log = self.parse_capacity_log(capacity_log_path)
-            print(f"용량 로그 행 수: {len(capacity_log)}")
+            print(f"용량 로그 행 수: {len(capacity_log):,}")
             if not capacity_log.empty:
-                print(f"용량 로그 컬럼: {list(capacity_log.columns)}")
+                print(f"용량 로그 컬럼 수: {len(capacity_log.columns)} ({list(capacity_log.columns)})")
         else:
             capacity_log = pd.DataFrame()
             print("CAPACITY.LOG 파일을 찾을 수 없습니다.")
