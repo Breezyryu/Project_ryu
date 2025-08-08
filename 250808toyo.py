@@ -122,38 +122,89 @@ class BatteryDataPreprocessor:
             DataType: 감지된 장비 타입
         """
         try:
+            print(f"장비 타입 감지 중... 경로: {self.data_path}")
+            
+            # 경로 내 모든 항목 확인
+            items = list(self.data_path.iterdir())
+            print(f"경로 내 항목들:")
+            for item in items:
+                print(f"  - {item.name} ({'디렉토리' if item.is_dir() else '파일'})")
+            
             # PNE 타입 확인 (M01Ch로 시작하는 폴더 존재)
-            for item in self.data_path.iterdir():
-                if item.is_dir() and item.name.startswith('M01Ch'):
-                    return 'pne'
+            pne_folders = [item for item in items if item.is_dir() and item.name.startswith('M01Ch')]
+            if pne_folders:
+                print(f"PNE 폴더 발견: {[f.name for f in pne_folders]}")
+                
+                # PNE 폴더 내부 구조 확인
+                for pne_folder in pne_folders[:1]:  # 첫 번째 폴더만 확인
+                    restore_path = pne_folder / 'Restore'
+                    if restore_path.exists():
+                        print(f"Restore 폴더 확인: {restore_path}")
+                        restore_files = list(restore_path.iterdir())
+                        print(f"Restore 내부 파일들:")
+                        for f in restore_files[:5]:  # 처음 5개만 표시
+                            print(f"    - {f.name}")
+                        
+                        # PNE 특징적인 파일들 확인
+                        pne_files = [f for f in restore_files if 'SaveData' in f.name or 'savingFileIndex' in f.name]
+                        if pne_files:
+                            print(f"PNE 특징 파일들: {[f.name for f in pne_files]}")
+                            return 'pne'
+                
+                # Restore 폴더가 없어도 M01Ch로 시작하면 PNE로 간주
+                return 'pne'
             
             # Toyo 타입 확인 (숫자 폴더 존재)
-            for item in self.data_path.iterdir():
-                if item.is_dir() and item.name.isdigit():
-                    # 첫 번째 숫자 폴더에서 샘플 파일 확인
-                    sample_folder = item
-                    sample_files = [f for f in sample_folder.iterdir() if re.match(r'^\d{6}$', f.name)]
+            numeric_folders = [item for item in items if item.is_dir() and item.name.isdigit()]
+            if numeric_folders:
+                print(f"숫자 폴더 발견: {[f.name for f in numeric_folders]}")
+                
+                # 첫 번째 숫자 폴더에서 샘플 파일 확인
+                sample_folder = numeric_folders[0]
+                print(f"샘플 폴더 확인: {sample_folder}")
+                
+                sample_files = [f for f in sample_folder.iterdir() if re.match(r'^\d{6}$', f.name)]
+                print(f"6자리 숫자 파일들: {len(sample_files)}개")
+                
+                if sample_files:
+                    # 첫 번째 파일의 헤더를 확인하여 Toyo1/Toyo2 구분
+                    sample_file = sample_files[0]
+                    print(f"샘플 파일 확인: {sample_file}")
                     
-                    if sample_files:
-                        # 첫 번째 파일의 헤더를 확인하여 Toyo1/Toyo2 구분
-                        sample_file = sample_files[0]
-                        try:
-                            with open(sample_file, 'r', encoding='utf-8', errors='ignore') as f:
-                                lines = f.readlines()
-                                if len(lines) >= 2:
-                                    header = lines[1].strip()  # 두 번째 줄이 실제 헤더
-                                    if 'PassedDate' in header:
-                                        return 'toyo1'
-                                    else:
-                                        return 'toyo2'
-                        except:
-                            pass
+                    try:
+                        with open(sample_file, 'r', encoding='utf-8', errors='ignore') as f:
+                            lines = f.readlines()
+                            if len(lines) >= 4:  # 4번째 줄 확인
+                                header = lines[3].strip()  # 4번째 줄이 실제 헤더
+                                print(f"헤더 내용: {header[:100]}...")
+                                
+                                if 'PassedDate' in header:
+                                    print("Toyo1 형식 감지 (PassedDate 존재)")
+                                    return 'toyo1'
+                                else:
+                                    print("Toyo2 형식 감지 (PassedDate 없음)")
+                                    return 'toyo2'
+                    except Exception as e:
+                        print(f"샘플 파일 읽기 오류: {e}")
+                
+                # 숫자 폴더가 있으면 기본적으로 Toyo2
+                print("기본 Toyo2 형식으로 설정")
+                return 'toyo2'
             
-            # 기본값은 toyo2
+            # Pattern 폴더가 있으면 PNE 가능성 높음
+            pattern_folders = [item for item in items if item.is_dir() and item.name.lower() == 'pattern']
+            if pattern_folders:
+                print("Pattern 폴더 발견 - PNE로 간주")
+                return 'pne'
+            
+            # 기본값
+            print("기본값으로 toyo2 설정")
             return 'toyo2'
             
         except Exception as e:
             print(f"장비 타입 감지 실패: {e}")
+            import traceback
+            traceback.print_exc()
             return 'toyo2'
     
     def detect_channels(self) -> List[str]:
@@ -165,7 +216,7 @@ class BatteryDataPreprocessor:
         """
         channels = []
         
-        print(f"경로 스캔 중: {self.data_path}")
+        print(f"채널 감지 중... (장비 타입: {self.data_type})")
         
         try:
             if self.data_type == 'pne':
@@ -174,6 +225,15 @@ class BatteryDataPreprocessor:
                     if item.is_dir() and item.name.startswith('M01Ch'):
                         channels.append(item.name)
                         print(f"PNE 채널 발견: {item.name}")
+                        
+                        # 채널 내부 구조 확인
+                        restore_path = item / 'Restore'
+                        if restore_path.exists():
+                            csv_files = [f for f in restore_path.iterdir() if f.suffix == '.csv']
+                            print(f"  - Restore 폴더 내 CSV 파일: {len(csv_files)}개")
+                        else:
+                            print(f"  - Restore 폴더 없음!")
+                            
             else:
                 # Toyo의 경우 숫자로 된 폴더들 찾기
                 for item in self.data_path.iterdir():
@@ -184,10 +244,10 @@ class BatteryDataPreprocessor:
                 channels.sort(key=int)  # 숫자 순으로 정렬
                 
         except Exception as e:
-            print(f"디렉토리 스캔 중 오류: {e}")
+            print(f"채널 감지 중 오류: {e}")
             return []
         
-        print(f"감지된 채널: {channels}")
+        print(f"최종 감지된 채널: {channels}")
         return channels
     
     def get_data_files(self, channel_path: Path) -> List[str]:
