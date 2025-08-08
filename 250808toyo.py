@@ -183,7 +183,49 @@ class BatteryDataPreprocessor:
             print(f"파일 파싱 실패 {file_path}: {e}")
             return pd.DataFrame()
     
-    def filter_meaningful_columns(self, df: pd.DataFrame, verbose: bool = False) -> pd.DataFrame:
+    def clean_column_name(self, col_name: str) -> str:
+        """
+        컬럼명을 정리 (특수문자 제거, 공백 제거)
+        
+        Args:
+            col_name (str): 원본 컬럼명
+            
+        Returns:
+            str: 정리된 컬럼명
+        """
+        # 공백 제거
+        clean_name = col_name.strip()
+        
+        # 특수문자를 언더스코어로 변경
+        clean_name = re.sub(r'[\[\]\(\)]', '', clean_name)  # 대괄호, 소괄호 제거
+        clean_name = re.sub(r'[^\w]', '_', clean_name)  # 특수문자를 언더스코어로
+        clean_name = re.sub(r'_+', '_', clean_name)  # 연속된 언더스코어를 하나로
+        clean_name = clean_name.strip('_')  # 시작/끝 언더스코어 제거
+        
+        return clean_name
+    
+    def print_progress_bar(self, current: int, total: int, bar_length: int = 40) -> None:
+        """
+        진행률을 바 형태로 출력
+        
+        Args:
+            current (int): 현재 진행량
+            total (int): 전체량
+            bar_length (int): 바의 길이
+        """
+        if total == 0:
+            return
+            
+        percent = float(current) / total
+        filled_length = int(bar_length * percent)
+        
+        bar = '█' * filled_length + '░' * (bar_length - filled_length)
+        
+        print(f'\r  진행률: |{bar}| {current}/{total} ({percent:.1%})', end='', flush=True)
+        
+        # 완료 시 줄바꿈
+        if current == total:
+            print()
         """
         의미있는 컬럼만 선택 (Col로 시작하는 컬럼과 빈 컬럼 제거)
         
@@ -248,7 +290,6 @@ class BatteryDataPreprocessor:
                     continue
             
             if df.empty:
-                print(f"CAPACITY.LOG 읽기 실패: {file_path}")
                 return pd.DataFrame()
             
             # 컬럼명 정리
@@ -258,7 +299,7 @@ class BatteryDataPreprocessor:
             df = df.dropna(how='all')
             
             # 의미있는 컬럼만 선택
-            df = self.filter_meaningful_columns(df)
+            df, _, _ = self.filter_meaningful_columns(df, verbose=False)
             
             # 특정 컬럼명 매핑 (사용자 요구사항에 맞게)
             column_mapping = {
@@ -338,9 +379,9 @@ class BatteryDataPreprocessor:
             if not df.empty:
                 all_data.append(df)
             
-            # 진행상황 표시
-            if (i + 1) % 100 == 0 or i == len(data_files) - 1:
-                print(f"  진행률: {i+1}/{len(data_files)} ({(i+1)/len(data_files)*100:.1f}%)")
+            # 진행상황 표시 (바 형태)
+            if (i + 1) % 50 == 0 or i == len(data_files) - 1:
+                self.print_progress_bar(i + 1, len(data_files))
         
         # 데이터 통합
         if all_data:
