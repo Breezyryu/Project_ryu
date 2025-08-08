@@ -415,13 +415,12 @@ class BatteryDataPreprocessor:
         
         return df_filtered, original_columns, columns_to_remove
     
-    def find_toyo_header_line(self, file_path: Path, verbose: bool = False) -> int:
+    def find_toyo_header_line(self, file_path: Path) -> int:
         """
         Toyo 파일에서 실제 헤더가 있는 줄 번호를 찾기
         
         Args:
             file_path (Path): 데이터 파일 경로
-            verbose (bool): 상세 로그 출력 여부
             
         Returns:
             int: 헤더 줄 번호 (0부터 시작)
@@ -440,34 +439,22 @@ class BatteryDataPreprocessor:
                         if not line:  # 빈 줄 건너뛰기
                             continue
                         
-                        # Date로 시작하는 줄을 헤더로 인식
-                        if line.startswith('Date') and 'Time' in line and 'Voltage' in line:
-                            if verbose:
-                                print(f"헤더 발견 (줄 {i+1}): {line[:50]}...")
+                        # Date로 시작하고 주요 컬럼들이 포함된 줄을 헤더로 인식
+                        if (line.startswith('Date') and 
+                            'Time' in line and 
+                            'Voltage' in line and 
+                            'Current' in line):
                             return i
-                    
-                    # 헤더를 찾지 못한 경우, 마지막으로 시도 (일반적인 패턴)
-                    for i, line in enumerate(lines):
-                        line = line.strip()
-                        if ',' in line and len(line.split(',')) > 10:  # 쉼표가 많은 줄
-                            if any(keyword in line for keyword in ['Date', 'Voltage', 'Current', 'Time']):
-                                if verbose:
-                                    print(f"추정 헤더 발견 (줄 {i+1}): {line[:50]}...")
-                                return i
                     
                     break
                 except UnicodeDecodeError:
                     continue
             
-            # 기본값: 3번째 줄 (인덱스 2)
-            if verbose:
-                print("헤더를 찾을 수 없어 기본값(3번째 줄) 사용")
-            return 2
+            # 기본값: 1번째 줄 (인덱스 1) - 보통 2번째 줄에 헤더가 있음
+            return 1
             
         except Exception as e:
-            if verbose:
-                print(f"헤더 찾기 실패 {file_path}: {e}")
-            return 2
+            return 1
     
     def parse_toyo_data_file(self, file_path: Path) -> pd.DataFrame:
         """
@@ -779,10 +766,14 @@ class BatteryDataPreprocessor:
             print(f"채널 {channel}에서 데이터 파일을 찾을 수 없습니다.")
             return pd.DataFrame(), pd.DataFrame()
         
-        # Toyo의 경우 헤더는 항상 4번째 줄 (인덱스 3)
-        header_line = 3 if self.data_type in ['toyo1', 'toyo2'] else 0
-        if self.data_type in ['toyo1', 'toyo2']:
-            print(f"Toyo 헤더 위치: 줄 {header_line + 1} (고정)")
+        # Toyo의 경우 동적으로 헤더 위치 찾기
+        header_line = 0  # 기본값
+        if self.data_type in ['toyo1', 'toyo2'] and data_files:
+            first_file_path = channel_path / data_files[0]
+            header_line = self.find_toyo_header_line(first_file_path)
+            print(f"Toyo 헤더 위치: 줄 {header_line + 1}")
+        elif self.data_type == 'pne':
+            header_line = 0  # PNE는 헤더 없음
         
         # 모든 데이터 파일 처리 (tqdm으로 진행률 표시)
         all_data: List[pd.DataFrame] = []
@@ -797,29 +788,29 @@ class BatteryDataPreprocessor:
         # tqdm을 사용한 진행률 표시
         with tqdm(total=len(data_files), desc=f"채널 {channel} 파일 처리", unit="파일") as pbar:
             for file_name in data_files:
-                    try:
-                        if self.data_type == 'pne':
-                            file_path = channel_path / 'Restore' / file_name
-                            df = self.parse_pne_data_file(file_path)
-                            
-                            if not df.empty:
-                                file_type = df['FileType'].iloc[0] if 'FileType' in df.columns else 'other'
-                                pne_file_groups[file_type].append(df)
-                                all_data.append(df)
-                                pbar.set_postfix({"현재 파일": file_name[:20], "행 수": len(df)})
+                try:
+                    if self.data_type == 'pne':
+                        file_path = channel_path / 'Restore' / file_name
+                        df = self.parse_pne_data_file(file_path)
+                        
+                        if not df.empty:
+                            file_type = df['FileType'].iloc[0] if 'FileType' in df.columns else 'other'
+                            pne_file_groups[file_type].append(df)
+                            all_data.append(df)
+                            pbar.set_postfix({"현재 파일": file_name[:20], "행 수": len(df)})
+                    else:
+                        file_path = channel_path / file_name
+                        df = self.parse_toyo_data_file_with_header(file_path, header_line)
+                        
+                        if not df.empty:
+                            all_data.append(df)
+                            pbar.set_postfix({"현재 파일": file_name, "행 수": len(df)})
                         else:
-                            file_path = channel_path / file_name
-                            df = self.parse_toyo_data_file_with_header(file_path, header_line)
+                            pbar.set_postfix({"현재 파일": file_name, "상태": "빈 데이터"})
                             
-                            if not df.empty:
-                                all_data.append(df)
-                                pbar.set_postfix({"현재 파일": file_name, "행 수": len(df)})
-                            else:
-                                pbar.set_postfix({"현재 파일": file_name, "상태": "빈 데이터"})
-                                
-                    except Exception as e:
-                        # 개별 파일 오류를 조용히 처리하고 계속 진행
-                        pbar.set_postfix({"현재 파일": file_name, "상태": f"오류-{type(e).__name__}"})
+                except Exception as e:
+                    # 개별 파일 오류를 조용히 처리하고 계속 진행
+                    pbar.set_postfix({"현재 파일": file_name, "상태": f"오류-{type(e).__name__}"})
                 
                 pbar.update(1)
         
