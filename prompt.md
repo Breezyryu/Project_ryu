@@ -82,3 +82,20 @@ data_path/
 |
 | ...
 |
+
+
+
+
+
+코드는 잘 실행되었다.
+
+capacity.csv 파일을 살펴보니 다음과 같다.
+
+Date	Time	Condition	Mode	Cycle	TotlCycle 	Cap{mAh]	PassTime	TotlPassTime	Pow[mWh]	AveVolt[V]	PeakVolt[V]	Col12	PeakTemp[Deg]	Ocv	Col15	Finish
+1	1	1	1	3667.963			15093.07	4.1412	4.5019		23.2	3.7872			0	0
+
+
+이렇게 나와야한다.
+
+Date	Time	Condition	Mode	Cycle	TotlCycle 	Cap_mAh	PassTime	TotlPassTime	Pow_mWh	AveVolt_V	PeakVolt_V	-	PeakTemp_Deg	Ocv_V	-	Finish
+2024/01/31	20:42:42	1	1	1	1	3667.963	4:24:29	4:24:29	15093.07	4.1412	4.5019		23.2	3.7872		Cur
