@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 import re
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Union
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -20,11 +20,14 @@ class BatteryDataPreprocessor:
             data_path (str): 데이터가 저장된 루트 경로
         """
         self.data_path = Path(data_path)
-        self.channels = {}
-        self.capacity_logs = {}
+        self.channels: Dict[str, pd.DataFrame] = {}
+        self.capacity_logs: Dict[str, pd.DataFrame] = {}
         
         if not self.data_path.exists():
             raise FileNotFoundError(f"데이터 경로가 존재하지 않습니다: {data_path}")
+        
+        print(f"데이터 경로 확인: {self.data_path}")
+        print(f"경로 존재 여부: {self.data_path.exists()}")
     
     def detect_channels(self) -> List[str]:
         """
@@ -34,9 +37,17 @@ class BatteryDataPreprocessor:
             List[str]: 채널 번호 리스트
         """
         channels = []
-        for item in self.data_path.iterdir():
-            if item.is_dir() and item.name.isdigit():
-                channels.append(item.name)
+        
+        print(f"경로 스캔 중: {self.data_path}")
+        
+        try:
+            for item in self.data_path.iterdir():
+                print(f"발견된 항목: {item.name}, 디렉토리: {item.is_dir()}, 숫자: {item.name.isdigit()}")
+                if item.is_dir() and item.name.isdigit():
+                    channels.append(item.name)
+        except Exception as e:
+            print(f"디렉토리 스캔 중 오류: {e}")
+            return []
         
         channels.sort(key=int)  # 숫자 순으로 정렬
         print(f"감지된 채널: {channels}")
@@ -54,9 +65,13 @@ class BatteryDataPreprocessor:
         """
         data_files = []
         
-        for file in channel_path.iterdir():
-            if file.is_file() and re.match(r'^\d{6}$', file.name):
-                data_files.append(file.name)
+        try:
+            for file in channel_path.iterdir():
+                if file.is_file() and re.match(r'^\d{6}$', file.name):
+                    data_files.append(file.name)
+        except Exception as e:
+            print(f"데이터 파일 스캔 중 오류 ({channel_path}): {e}")
+            return []
         
         # 숫자 순으로 정렬
         data_files.sort()
@@ -73,8 +88,20 @@ class BatteryDataPreprocessor:
             str: 'toyo1' 또는 'toyo2'
         """
         try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                header = f.readline().strip()
+            # 여러 인코딩 시도
+            encodings = ['utf-8', 'cp949', 'euc-kr', 'latin1']
+            
+            for encoding in encodings:
+                try:
+                    with open(file_path, 'r', encoding=encoding) as f:
+                        header = f.readline().strip()
+                    break
+                except UnicodeDecodeError:
+                    continue
+            else:
+                # 모든 인코딩 실패시 바이너리로 읽어서 처리
+                with open(file_path, 'rb') as f:
+                    header = f.readline().decode('utf-8', errors='ignore').strip()
             
             # PassedDate 컬럼이 있으면 Toyo1, 없으면 Toyo2
             if 'PassedDate' in header:
@@ -112,9 +139,26 @@ class BatteryDataPreprocessor:
                     'Condition', 'Mode', 'Cycle', 'TotlCycle', 'Temp1[Deg]_2'
                 ]
             
-            # 데이터 읽기
-            df = pd.read_csv(file_path, header=0, names=columns, 
-                           encoding='utf-8', errors='ignore')
+            # 여러 인코딩 시도하여 데이터 읽기
+            encodings = ['utf-8', 'cp949', 'euc-kr', 'latin1']
+            df = pd.DataFrame()
+            
+            for encoding in encodings:
+                try:
+                    df = pd.read_csv(
+                        str(file_path),  # Path 객체를 문자열로 변환
+                        header=0, 
+                        names=columns,
+                        encoding=encoding,
+                        on_bad_lines='skip'  # 잘못된 라인 건너뛰기
+                    )
+                    break
+                except (UnicodeDecodeError, pd.errors.ParserError):
+                    continue
+            
+            if df.empty:
+                print(f"파일 읽기 실패: {file_path}")
+                return pd.DataFrame()
             
             # 빈 행 제거
             df = df.dropna(how='all')
@@ -166,8 +210,26 @@ class BatteryDataPreprocessor:
                     'Ocv', 'Col15', 'Finish'
                 ]
             
-            df = pd.read_csv(file_path, header=0, names=columns,
-                           encoding='utf-8', errors='ignore')
+            # 여러 인코딩 시도
+            encodings = ['utf-8', 'cp949', 'euc-kr', 'latin1']
+            df = pd.DataFrame()
+            
+            for encoding in encodings:
+                try:
+                    df = pd.read_csv(
+                        str(file_path),  # Path 객체를 문자열로 변환
+                        header=0,
+                        names=columns,
+                        encoding=encoding,
+                        on_bad_lines='skip'
+                    )
+                    break
+                except (UnicodeDecodeError, pd.errors.ParserError):
+                    continue
+            
+            if df.empty:
+                print(f"CAPACITY.LOG 읽기 실패: {file_path}")
+                return pd.DataFrame()
             
             # 빈 행 제거
             df = df.dropna(how='all')
@@ -202,6 +264,11 @@ class BatteryDataPreprocessor:
         """
         channel_path = self.data_path / channel
         print(f"\n채널 {channel} 처리 중...")
+        print(f"채널 경로: {channel_path}")
+        
+        if not channel_path.exists():
+            print(f"채널 경로가 존재하지 않습니다: {channel_path}")
+            return pd.DataFrame(), pd.DataFrame()
         
         # 데이터 파일들 찾기
         data_files = self.get_data_files(channel_path)
@@ -280,7 +347,7 @@ class BatteryDataPreprocessor:
         print(f"\n전체 처리 완료!")
         return results
     
-    def save_processed_data(self, output_path: str, file_format: str = 'csv'):
+    def save_processed_data(self, output_path: str, file_format: str = 'csv') -> None:
         """
         처리된 데이터를 저장
         
@@ -298,13 +365,13 @@ class BatteryDataPreprocessor:
             if not self.channels[channel].empty:
                 if file_format == 'csv':
                     file_path = output_dir / f"channel_{channel}_data.csv"
-                    self.channels[channel].to_csv(file_path, index=False, encoding='utf-8-sig')
+                    self.channels[channel].to_csv(str(file_path), index=False, encoding='utf-8-sig')
                 elif file_format == 'excel':
                     file_path = output_dir / f"channel_{channel}_data.xlsx"
-                    self.channels[channel].to_excel(file_path, index=False)
+                    self.channels[channel].to_excel(str(file_path), index=False)
                 elif file_format == 'pickle':
                     file_path = output_dir / f"channel_{channel}_data.pkl"
-                    self.channels[channel].to_pickle(file_path)
+                    self.channels[channel].to_pickle(str(file_path))
                 
                 print(f"  채널 {channel} 데이터 저장: {file_path}")
             
@@ -312,13 +379,13 @@ class BatteryDataPreprocessor:
             if not self.capacity_logs[channel].empty:
                 if file_format == 'csv':
                     file_path = output_dir / f"channel_{channel}_capacity.csv"
-                    self.capacity_logs[channel].to_csv(file_path, index=False, encoding='utf-8-sig')
+                    self.capacity_logs[channel].to_csv(str(file_path), index=False, encoding='utf-8-sig')
                 elif file_format == 'excel':
                     file_path = output_dir / f"channel_{channel}_capacity.xlsx"
-                    self.capacity_logs[channel].to_excel(file_path, index=False)
+                    self.capacity_logs[channel].to_excel(str(file_path), index=False)
                 elif file_format == 'pickle':
                     file_path = output_dir / f"channel_{channel}_capacity.pkl"
-                    self.capacity_logs[channel].to_pickle(file_path)
+                    self.capacity_logs[channel].to_pickle(str(file_path))
                 
                 print(f"  채널 {channel} 용량로그 저장: {file_path}")
         
@@ -369,13 +436,16 @@ class BatteryDataPreprocessor:
         return summary
 
 # 사용 예시 함수
-def main(data_path: str, output_path: str = None):
+def main(data_path: str, output_path: Optional[str] = None) -> Optional['BatteryDataPreprocessor']:
     """
     메인 실행 함수
     
     Args:
         data_path (str): 입력 데이터 경로
-        output_path (str): 출력 경로 (None이면 저장하지 않음)
+        output_path (Optional[str]): 출력 경로 (None이면 저장하지 않음)
+    
+    Returns:
+        Optional[BatteryDataPreprocessor]: 성공시 전처리기 객체, 실패시 None
     """
     try:
         # 전처리기 생성
@@ -406,16 +476,27 @@ def main(data_path: str, output_path: str = None):
         
     except Exception as e:
         print(f"처리 중 오류 발생: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 # 실행 예시
 if __name__ == "__main__":
     # 사용법
-    data_path = input("데이터 폴더 경로를 입력하세요: ").strip()
-    output_path = input("출력 폴더 경로를 입력하세요 (엔터시 저장 안함): ").strip()
+    print("=== 리튬이온배터리 데이터 전처리 ===")
     
-    if not output_path:
-        output_path = None
+    # 입력 경로 처리
+    while True:
+        data_path = input("데이터 폴더 경로를 입력하세요: ").strip().strip('"').strip("'")
+        if data_path and Path(data_path).exists():
+            break
+        else:
+            print(f"경로가 존재하지 않습니다: {data_path}")
+            print("올바른 경로를 입력해주세요.")
+    
+    # 출력 경로 처리
+    output_input = input("출력 폴더 경로를 입력하세요 (엔터시 저장 안함): ").strip().strip('"').strip("'")
+    output_path = output_input if output_input else None
     
     # 전처리 실행
     preprocessor = main(data_path, output_path)
@@ -424,3 +505,5 @@ if __name__ == "__main__":
         print("\n전처리 완료!")
         print("preprocessor.channels[채널번호]로 데이터에 접근할 수 있습니다.")
         print("preprocessor.capacity_logs[채널번호]로 용량로그에 접근할 수 있습니다.")
+    else:
+        print("전처리 실패!")
