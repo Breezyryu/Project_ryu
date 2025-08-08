@@ -77,19 +77,20 @@ class BatteryDataPreprocessor:
         data_files.sort()
         return data_files
     
-    def detect_data_format(self, file_path: Path) -> str:
+    def detect_data_format(self, file_path: Path) -> Tuple[str, List[str]]:
         """
-        데이터 파일의 형식을 감지 (Toyo1 vs Toyo2)
+        데이터 파일의 형식을 감지하고 실제 헤더를 반환 (Toyo1 vs Toyo2)
         
         Args:
             file_path (Path): 데이터 파일 경로
             
         Returns:
-            str: 'toyo1' 또는 'toyo2'
+            Tuple[str, List[str]]: (형식, 실제헤더리스트)
         """
         try:
             # 여러 인코딩 시도
             encodings = ['utf-8', 'cp949', 'euc-kr', 'latin1']
+            header = ""
             
             for encoding in encodings:
                 try:
@@ -103,54 +104,51 @@ class BatteryDataPreprocessor:
                 with open(file_path, 'rb') as f:
                     header = f.readline().decode('utf-8', errors='ignore').strip()
             
+            # 헤더를 쉼표로 분할
+            columns = [col.strip() for col in header.split(',')]
+            
             # PassedDate 컬럼이 있으면 Toyo1, 없으면 Toyo2
             if 'PassedDate' in header:
-                return 'toyo1'
+                data_format = 'toyo1'
             else:
-                return 'toyo2'
+                data_format = 'toyo2'
+                
+            return data_format, columns
+            
         except Exception as e:
             print(f"파일 형식 감지 실패 {file_path}: {e}")
-            return 'toyo1'  # 기본값
+            # 기본 컬럼 반환
+            default_columns = [
+                'Date', 'Time', 'PassTime[Sec]', 'Voltage[V]', 'Current[mA]',
+                'Col5', 'Col6', 'Temp1[Deg]', 'Col8', 'Col9', 'Col10', 'Col11',
+                'Condition', 'Mode', 'Cycle', 'TotlCycle', 'Temp1[Deg]_2'
+            ]
+            return 'toyo2', default_columns
     
-    def parse_data_file(self, file_path: Path, data_format: str) -> pd.DataFrame:
+    def parse_data_file(self, file_path: Path, columns: List[str]) -> pd.DataFrame:
         """
         개별 데이터 파일을 파싱
         
         Args:
             file_path (Path): 데이터 파일 경로
-            data_format (str): 데이터 형식 ('toyo1' 또는 'toyo2')
+            columns (List[str]): 컬럼명 리스트
             
         Returns:
             pd.DataFrame: 파싱된 데이터프레임
         """
         try:
-            if data_format == 'toyo1':
-                # Toyo1 형식의 컬럼
-                columns = [
-                    'Date', 'Time', 'PassTime[Sec]', 'Voltage[V]', 'Current[mA]',
-                    'Col5', 'Col6', 'Temp1[Deg]', 'Col8', 'Col9', 'Col10', 'Col11',
-                    'Condition', 'Mode', 'Cycle', 'TotlCycle', 'PassedDate', 'Temp1[Deg]_2'
-                ]
-            else:
-                # Toyo2 형식의 컬럼
-                columns = [
-                    'Date', 'Time', 'PassTime[Sec]', 'Voltage[V]', 'Current[mA]',
-                    'Col5', 'Col6', 'Temp1[Deg]', 'Col8', 'Col9', 'Col10', 'Col11',
-                    'Condition', 'Mode', 'Cycle', 'TotlCycle', 'Temp1[Deg]_2'
-                ]
-            
             # 여러 인코딩 시도하여 데이터 읽기
             encodings = ['utf-8', 'cp949', 'euc-kr', 'latin1']
             df = pd.DataFrame()
             
             for encoding in encodings:
                 try:
+                    # 헤더가 있는 파일이므로 첫 번째 줄은 건너뛰고 읽기
                     df = pd.read_csv(
-                        str(file_path),  # Path 객체를 문자열로 변환
-                        header=0, 
-                        names=columns,
+                        str(file_path),
+                        header=0,  # 첫 번째 줄을 헤더로 사용
                         encoding=encoding,
-                        on_bad_lines='skip'  # 잘못된 라인 건너뛰기
+                        on_bad_lines='skip'
                     )
                     break
                 except (UnicodeDecodeError, pd.errors.ParserError):
@@ -160,15 +158,18 @@ class BatteryDataPreprocessor:
                 print(f"파일 읽기 실패: {file_path}")
                 return pd.DataFrame()
             
+            # 컬럼명 정리 (특수문자 제거, 공백 제거)
+            df.columns = [self.clean_column_name(col) for col in df.columns]
+            
             # 빈 행 제거
             df = df.dropna(how='all')
             
-            # 데이터 타입 변환
-            numeric_columns = ['PassTime[Sec]', 'Voltage[V]', 'Current[mA]', 
-                             'Temp1[Deg]', 'Condition', 'Mode', 'Cycle', 'TotlCycle']
+            # 빈 열 제거 (모든 값이 NaN이거나 빈 문자열인 열)
+            df = self.remove_empty_columns(df)
             
-            if data_format == 'toyo1':
-                numeric_columns.append('PassedDate')
+            # 데이터 타입 변환
+            numeric_columns = ['PassTime_Sec', 'Voltage_V', 'Current_mA', 
+                             'Temp1_Deg', 'Condition', 'Mode', 'Cycle', 'TotlCycle', 'PassedDate']
             
             for col in numeric_columns:
                 if col in df.columns:
@@ -183,33 +184,60 @@ class BatteryDataPreprocessor:
             print(f"파일 파싱 실패 {file_path}: {e}")
             return pd.DataFrame()
     
-    def parse_capacity_log(self, file_path: Path, data_format: str) -> pd.DataFrame:
+    def clean_column_name(self, col_name: str) -> str:
+        """
+        컬럼명을 정리 (특수문자 제거, 공백 제거)
+        
+        Args:
+            col_name (str): 원본 컬럼명
+            
+        Returns:
+            str: 정리된 컬럼명
+        """
+        # 공백 제거
+        clean_name = col_name.strip()
+        
+        # 특수문자를 언더스코어로 변경
+        clean_name = re.sub(r'[\[\]\(\)]', '', clean_name)  # 대괄호, 소괄호 제거
+        clean_name = re.sub(r'[^\w]', '_', clean_name)  # 특수문자를 언더스코어로
+        clean_name = re.sub(r'_+', '_', clean_name)  # 연속된 언더스코어를 하나로
+        clean_name = clean_name.strip('_')  # 시작/끝 언더스코어 제거
+        
+        return clean_name
+    
+    def remove_empty_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        빈 열 제거
+        
+        Args:
+            df (pd.DataFrame): 입력 데이터프레임
+            
+        Returns:
+            pd.DataFrame: 빈 열이 제거된 데이터프레임
+        """
+        # 모든 값이 NaN이거나 빈 문자열인 열 찾기
+        empty_cols = []
+        for col in df.columns:
+            if df[col].isna().all() or (df[col].astype(str).str.strip() == '').all():
+                empty_cols.append(col)
+        
+        if empty_cols:
+            print(f"빈 열 제거: {empty_cols}")
+            df = df.drop(columns=empty_cols)
+        
+        return df
+    
+    def parse_capacity_log(self, file_path: Path) -> pd.DataFrame:
         """
         CAPACITY.LOG 파일을 파싱
         
         Args:
             file_path (Path): CAPACITY.LOG 파일 경로
-            data_format (str): 데이터 형식
             
         Returns:
             pd.DataFrame: 파싱된 용량 로그 데이터프레임
         """
         try:
-            if data_format == 'toyo1':
-                columns = [
-                    'Date', 'Time', 'Condition', 'Mode', 'Cycle', 'TotlCycle',
-                    'Cap[mAh]', 'PassTime', 'TotlPassTime', 'Pow[mWh]',
-                    'AveVolt[V]', 'PeakVolt[V]', 'Col12', 'PeakTemp[Deg]',
-                    'Ocv', 'Col15', 'Finish', 'DchCycle', 'PassedDate'
-                ]
-            else:
-                columns = [
-                    'Date', 'Time', 'Condition', 'Mode', 'Cycle', 'TotlCycle',
-                    'Cap[mAh]', 'PassTime', 'TotlPassTime', 'Pow[mWh]',
-                    'AveVolt[V]', 'PeakVolt[V]', 'Col12', 'PeakTemp[Deg]',
-                    'Ocv', 'Col15', 'Finish'
-                ]
-            
             # 여러 인코딩 시도
             encodings = ['utf-8', 'cp949', 'euc-kr', 'latin1']
             df = pd.DataFrame()
@@ -217,9 +245,8 @@ class BatteryDataPreprocessor:
             for encoding in encodings:
                 try:
                     df = pd.read_csv(
-                        str(file_path),  # Path 객체를 문자열로 변환
-                        header=0,
-                        names=columns,
+                        str(file_path),
+                        header=0,  # 첫 번째 줄을 헤더로 사용
                         encoding=encoding,
                         on_bad_lines='skip'
                     )
@@ -231,16 +258,34 @@ class BatteryDataPreprocessor:
                 print(f"CAPACITY.LOG 읽기 실패: {file_path}")
                 return pd.DataFrame()
             
+            # 컬럼명 정리
+            df.columns = [self.clean_column_name(col) for col in df.columns]
+            
             # 빈 행 제거
             df = df.dropna(how='all')
             
+            # 빈 열 제거
+            df = self.remove_empty_columns(df)
+            
+            # 특정 컬럼명 매핑 (사용자 요구사항에 맞게)
+            column_mapping = {
+                'Cap_mAh': 'Cap_mAh',
+                'Pow_mWh': 'Pow_mWh', 
+                'AveVolt_V': 'AveVolt_V',
+                'PeakVolt_V': 'PeakVolt_V',
+                'PeakTemp_Deg': 'PeakTemp_Deg',
+                'Ocv': 'Ocv_V'
+            }
+            
+            # 컬럼명 변경
+            for old_name, new_name in column_mapping.items():
+                if old_name in df.columns:
+                    df = df.rename(columns={old_name: new_name})
+            
             # 데이터 타입 변환
             numeric_columns = ['Condition', 'Mode', 'Cycle', 'TotlCycle',
-                             'Cap[mAh]', 'Pow[mWh]', 'AveVolt[V]', 'PeakVolt[V]',
-                             'PeakTemp[Deg]', 'Ocv']
-            
-            if data_format == 'toyo1':
-                numeric_columns.extend(['DchCycle', 'PassedDate'])
+                             'Cap_mAh', 'Pow_mWh', 'AveVolt_V', 'PeakVolt_V',
+                             'PeakTemp_Deg', 'Ocv_V', 'DchCycle', 'PassedDate']
             
             for col in numeric_columns:
                 if col in df.columns:
@@ -280,14 +325,15 @@ class BatteryDataPreprocessor:
         
         # 첫 번째 파일로 데이터 형식 감지
         first_file_path = channel_path / data_files[0]
-        data_format = self.detect_data_format(first_file_path)
+        data_format, columns = self.detect_data_format(first_file_path)
         print(f"감지된 데이터 형식: {data_format}")
+        print(f"감지된 컬럼: {columns[:5]}...")  # 처음 5개만 표시
         
         # 모든 데이터 파일 처리
         all_data = []
         for i, file_name in enumerate(data_files):
             file_path = channel_path / file_name
-            df = self.parse_data_file(file_path, data_format)
+            df = self.parse_data_file(file_path, columns)
             
             if not df.empty:
                 all_data.append(df)
@@ -300,6 +346,7 @@ class BatteryDataPreprocessor:
         if all_data:
             combined_data = pd.concat(all_data, ignore_index=True)
             print(f"통합된 데이터 행 수: {len(combined_data)}")
+            print(f"최종 컬럼: {list(combined_data.columns)}")
         else:
             combined_data = pd.DataFrame()
             print("처리된 데이터가 없습니다.")
@@ -307,8 +354,10 @@ class BatteryDataPreprocessor:
         # CAPACITY.LOG 처리
         capacity_log_path = channel_path / "CAPACITY.LOG"
         if capacity_log_path.exists():
-            capacity_log = self.parse_capacity_log(capacity_log_path, data_format)
+            capacity_log = self.parse_capacity_log(capacity_log_path)
             print(f"용량 로그 행 수: {len(capacity_log)}")
+            if not capacity_log.empty:
+                print(f"용량 로그 컬럼: {list(capacity_log.columns)}")
         else:
             capacity_log = pd.DataFrame()
             print("CAPACITY.LOG 파일을 찾을 수 없습니다.")
