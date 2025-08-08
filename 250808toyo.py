@@ -737,41 +737,52 @@ class BatteryDataPreprocessor:
         # tqdm을 사용한 진행률 표시
         with tqdm(total=len(data_files), desc=f"채널 {channel} 파일 처리", unit="파일") as pbar:
             for file_name in data_files:
-                try:
-                    if self.data_type == 'pne':
-                        file_path = channel_path / 'Restore' / file_name
-                        df = self.parse_pne_data_file(file_path)
-                        
-                        if not df.empty:
-                            file_type = df['FileType'].iloc[0] if 'FileType' in df.columns else 'other'
-                            pne_file_groups[file_type].append(df)
-                            all_data.append(df)
-                            pbar.set_postfix({"현재 파일": file_name[:20], "행 수": len(df)})
-                    else:
-                        file_path = channel_path / file_name
-                        df = self.parse_toyo_data_file_with_header(file_path, header_line)
-                        
-                        if not df.empty:
-                            all_data.append(df)
-                            pbar.set_postfix({"현재 파일": file_name, "행 수": len(df)})
+                    try:
+                        if self.data_type == 'pne':
+                            file_path = channel_path / 'Restore' / file_name
+                            df = self.parse_pne_data_file(file_path)
                             
-                except Exception as e:
-                    # 개별 파일 오류를 조용히 처리하고 계속 진행
-                    pbar.set_postfix({"현재 파일": file_name, "상태": "오류"})
+                            if not df.empty:
+                                file_type = df['FileType'].iloc[0] if 'FileType' in df.columns else 'other'
+                                pne_file_groups[file_type].append(df)
+                                all_data.append(df)
+                                pbar.set_postfix({"현재 파일": file_name[:20], "행 수": len(df)})
+                        else:
+                            file_path = channel_path / file_name
+                            df = self.parse_toyo_data_file_with_header(file_path, header_line)
+                            
+                            if not df.empty:
+                                all_data.append(df)
+                                pbar.set_postfix({"현재 파일": file_name, "행 수": len(df)})
+                            else:
+                                pbar.set_postfix({"현재 파일": file_name, "상태": "빈 데이터"})
+                                
+                    except Exception as e:
+                        # 개별 파일 오류를 조용히 처리하고 계속 진행
+                        pbar.set_postfix({"현재 파일": file_name, "상태": f"오류-{type(e).__name__}"})
                 
                 pbar.update(1)
         
-        # 데이터 통합 (인덱스 재설정으로 중복 인덱스 문제 해결)
+        # 데이터 통합 (강화된 인덱스 처리)
         if all_data:
             print("데이터 통합 중...")
             try:
-                # 각 DataFrame의 인덱스를 리셋하여 중복 방지
+                # 방법 1: 각 DataFrame을 완전히 새로운 인덱스로 재설정
+                cleaned_data = []
                 for i, df in enumerate(all_data):
-                    all_data[i] = df.reset_index(drop=True)
+                    if not df.empty:
+                        # 완전히 새로운 DataFrame으로 복사하여 인덱스 문제 해결
+                        new_df = pd.DataFrame(df.values, columns=df.columns)
+                        new_df = new_df.reset_index(drop=True)
+                        cleaned_data.append(new_df)
                 
-                combined_data = pd.concat(all_data, ignore_index=True)
-                print(f"통합된 데이터 행 수: {len(combined_data):,}")
-                print(f"최종 컬럼 수: {len(combined_data.columns)}")
+                if cleaned_data:
+                    combined_data = pd.concat(cleaned_data, ignore_index=True, sort=False)
+                    print(f"통합된 데이터 행 수: {len(combined_data):,}")
+                    print(f"최종 컬럼 수: {len(combined_data.columns)}")
+                else:
+                    combined_data = pd.DataFrame()
+                    print("유효한 데이터가 없습니다.")
                 
                 # PNE의 경우 파일 타입별 통계 출력
                 if self.data_type == 'pne':
@@ -780,9 +791,32 @@ class BatteryDataPreprocessor:
                         if dfs:
                             total_rows = sum(len(df) for df in dfs)
                             print(f"  - {file_type}: {len(dfs)}개 파일, {total_rows:,}행")
+                            
             except Exception as e:
                 print(f"데이터 통합 중 오류 발생: {e}")
-                combined_data = pd.DataFrame()
+                print("대안 방법으로 재시도...")
+                
+                # 방법 2: 수동으로 행별 통합
+                try:
+                    if all_data:
+                        combined_rows = []
+                        for df in all_data:
+                            if not df.empty:
+                                combined_rows.extend(df.values.tolist())
+                        
+                        if combined_rows and all_data:
+                            # 첫 번째 유효한 DataFrame의 컬럼을 사용
+                            first_valid_df = next(df for df in all_data if not df.empty)
+                            combined_data = pd.DataFrame(combined_rows, columns=first_valid_df.columns)
+                            print(f"대안 방법으로 통합 완료: {len(combined_data):,}행")
+                        else:
+                            combined_data = pd.DataFrame()
+                    else:
+                        combined_data = pd.DataFrame()
+                        
+                except Exception as e2:
+                    print(f"대안 방법도 실패: {e2}")
+                    combined_data = pd.DataFrame()
         else:
             combined_data = pd.DataFrame()
             print("처리된 데이터가 없습니다.")
@@ -838,11 +872,14 @@ class BatteryDataPreprocessor:
             # 빈 행 제거
             df = df.dropna(how='all')
             
-            # 인덱스가 중복되지 않도록 리셋
-            df = df.reset_index(drop=True)
+            if df.empty:
+                return pd.DataFrame()
             
             # 의미있는 컬럼만 선택
             df_filtered, _, _ = self.filter_meaningful_columns(df, verbose=False)
+            
+            if df_filtered.empty:
+                return pd.DataFrame()
             
             # 데이터 타입 변환
             numeric_columns = ['PassTime_Sec', 'Voltage_V', 'Current_mA', 
@@ -858,10 +895,11 @@ class BatteryDataPreprocessor:
             # 파일명 추가
             df_filtered['FileName'] = file_path.name
             
-            # 최종 인덱스 리셋으로 중복 방지
-            df_filtered = df_filtered.reset_index(drop=True)
+            # 완전히 새로운 DataFrame으로 생성하여 인덱스 문제 방지
+            result_df = pd.DataFrame(df_filtered.values, columns=df_filtered.columns)
+            result_df = result_df.reset_index(drop=True)
             
-            return df_filtered
+            return result_df
             
         except Exception as e:
             # 조용히 실패하고 빈 DataFrame 반환
